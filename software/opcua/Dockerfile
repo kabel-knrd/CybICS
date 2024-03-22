@@ -6,4 +6,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 ADD certificates ./certificates
 COPY opcua.py ./
 
+#CMD sleep infinity
 CMD [ "python", "./opcua.py" ]
