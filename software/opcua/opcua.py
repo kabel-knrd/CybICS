@@ -3,16 +3,11 @@
 import asyncio
 import logging
 import socket
-
-from typing import Union
-
-from asyncua.crypto import uacrypto
-from asyncua.server.users import User, UserRole
+import user_manager
 
 from pathlib import Path
 from asyncua import Server, ua
 from asyncua.crypto.permission_rules import SimpleRoleRuleset
-from asyncua.server.user_managers import CertificateUserManager
 from asyncua.crypto.cert_gen import setup_self_signed_certificate
 from asyncua.crypto.validator import CertificateValidator, CertificateValidatorOptions
 from cryptography.x509.oid import ExtendedKeyUsageOID
@@ -21,46 +16,8 @@ from pymodbus.client import ModbusTcpClient
 
 USE_TRUST_STORE = False
 
-users_db =  {
-                "user1": "pw1"
-            }
 
-class Cert_User_UserManager:
-    """
-    Certificate user manager, takes a certificate handler with its associated users and provides those users.
-    """
-    def __init__(self):
-        self._trusted_certificates = {}
 
-    async def add_role(self, certificate_path: Path, user_role: UserRole, name: str, format: Union[str, None] = None):
-        certificate = await uacrypto.load_certificate(certificate_path, format)
-        if name is None:
-            raise KeyError
-
-        user = User(role=user_role, name=name)
-
-        if name in self._trusted_certificates:
-            logging.warning("certificate with name %s "
-                            "attempted to be added multiple times, only the last version will be kept.", name)
-        self._trusted_certificates[name] = {'certificate': uacrypto.der_from_x509(certificate), 'user': user}
-
-    def get_user(self, iserver, username=None, password=None, certificate=None):
-        if username in users_db and password == users_db[username]:
-            return User(role=UserRole.User)
-        if certificate is None:
-            return None
-        correct_users = [prospective_certificate['user'] for prospective_certificate in self._trusted_certificates.values()
-                         if certificate == prospective_certificate['certificate']]
-        if len(correct_users) == 0:
-            return None
-        else:
-            return correct_users[0]
-
-    async def add_user(self, certificate_path: Path, name: str, format: Union[str, None] = None):
-        await self.add_role(certificate_path=certificate_path, user_role=UserRole.User, name=name, format=format)
-
-    async def add_admin(self, certificate_path: Path, name: str, format: Union[str, None] = None):
-        await self.add_role(certificate_path=certificate_path, user_role=UserRole.Admin, name=name, format=format)
 
 
 async def main():
@@ -71,9 +28,9 @@ async def main():
     server_private_key = Path(cert_base / "certificates/server-private-key-example.pem")
 
     host_name = socket.gethostname()
-    server_app_uri = f"myselfsignedserver@{host_name}"
-    cert_user_manager = Cert_User_UserManager()
-    await cert_user_manager.add_admin("certificates/trusted/peer-certificate-example-1.der", name='test_admin')
+    server_app_uri = f"urn:opcua:python:server"
+    cert_user_manager = user_manager.Pw_Cert_UserManager()
+    await cert_user_manager.add_admin("certificates/trusted/certificate.der", name='test_admin')
 
     # Connect to OpenPLC
     client = ModbusTcpClient(host="openplc",port=502)  # Create client object
@@ -92,8 +49,16 @@ async def main():
     server.set_security_policy(
         [
             ua.SecurityPolicyType.NoSecurity,
-            ua.SecurityPolicyType.Basic256Sha256_SignAndEncrypt,
+            ua.SecurityPolicyType.Basic128Rsa15_Sign,
+            ua.SecurityPolicyType.Basic128Rsa15_SignAndEncrypt,
+            ua.SecurityPolicyType.Basic256_Sign,
+            ua.SecurityPolicyType.Basic256_SignAndEncrypt,
             ua.SecurityPolicyType.Basic256Sha256_Sign,
+            ua.SecurityPolicyType.Basic256Sha256_SignAndEncrypt,
+            ua.SecurityPolicyType.Aes128Sha256RsaOaep_Sign,
+            ua.SecurityPolicyType.Aes128Sha256RsaOaep_SignAndEncrypt,
+            ua.SecurityPolicyType.Aes256Sha256RsaPss_Sign,
+            ua.SecurityPolicyType.Aes256Sha256RsaPss_SignAndEncrypt,
         ],
         permission_ruleset=SimpleRoleRuleset()
     )
@@ -114,8 +79,8 @@ async def main():
                                             'organizationName': "Bar Ltd",
                                         })
 
-    # load server certificate and private key. This enables endpoints
-    # with signing and encryption.
+    # load server certificate and private key. 
+    # this enables endpoints ith signing and encryption.
     await server.load_certificate(str(server_cert))
     await server.load_private_key(str(server_private_key))
 
@@ -137,7 +102,11 @@ async def main():
     boSenvar = await myobj.add_variable(idx, "boSen", ua.UInt16(0))
     stopvar = await myobj.add_variable(idx, "STOP", ua.UInt16(0))
     manualvar = await myobj.add_variable(idx, "manual", ua.UInt16(0))
-    tmp = await myobj.add_variable(idx, "tmp", ua.UInt16(0))
+    obtain_flag = await myobj.add_variable(idx, "Set > 0 to obtain flag!", ua.UInt16(0))
+    flag = await myobj.add_variable(idx, "The flag is:", "")
+    cert1line = await myobj.add_variable(idx, "Cert_1-Line", "-----BEGIN CERTIFICATE-----")
+    cert2line = await myobj.add_variable(idx, "Cert_2-Line", "MIIEfTCCA2WgAwIBAgIUCngZw9oiLtiy0PPhjsw15BLzGP8wDQYJKoZIhvcNAQELBQAwVjELMAkGA1UEBhMCREUxCzAJBgNVBAgMAkhFMQswCQYDVQQHDAJIRTERMA8GA1UECgwIS29ucmFkS2UxGjAYBgNVBAMMEVB5dGhvbk9wY1VhU2VydmVyMB4XDTI0MDMyMzE3MjYwOVoXDTI1MDMyMzE3MjYwOVowVjELMAkGA1UEBhMCREUxCzAJBgNVBAgMAkhFMQswCQYDVQQHDAJIRTERMA8GA1UECgwIS29ucmFkS2UxGjAYBgNVBAMMEVB5dGhvbk9wY1VhU2VydmVyMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAlbiG76JcAWf3vN11hOFlmGVPQCecFkkkcqkR150FcwF6qpKyzcm8gpVcIaGfcvvNj36BUZivT7/baMbs7l0ovH8TtfmClgUM35CoJB6wdj1WOKwqk4TEZldWP1yOuwKU/6/sY4Rl7ohGpaVDIot03mA0R7mgCXG+R3v5lAlTtjZpTB/cIHLm20+HrmIeSA5Ig8IaaK8ZoqDhILh3WaSLbguOcR5MLiA0vqN8INRJ39udxuP/1GmHHyYvzLWbp8VbpNbF6En+4jxmoscVrjFuDSTo1GbguEF8CSrbudm+otNxlcu5R3Gezl0hOndI5UbKXnl0VJ3EMsEms1gTLBRyVwIDAQABo4IBQTCCAT0wCQYDVR0TBAIwADARBglghkgBhvhCAQEEBAMCBsAwCwYDVR0PBAQDAgL0MB0GA1UdJQQWMBQGCCsGAQUFBwMBBggrBgEFBQcDAjArBglghkgBhvhCAQ0EHhYcT3BlblNTTCBHZW5lcmF0ZWQgQ2VydGlmaWNhdDAdBgNVHQ4EFgQUO40Hf6IVPD/Ck2o9TXNlzr/F7qYwewYDVR0jBHQwcqFapFgwVjELMAkGA1UEBhMCREUxCzAJBgNVBAgMAkhFMQswCQYDVQQHDAJIRTERMA8GA1UECgwIS29ucmFkS2UxGjAYBgNVBAMMEVB5dGhvbk9wY1VhU2VydmVyghQKeBnD2iIu2LLQ8+GOzDXkEvMY/zAoBgNVHREEITAfhhd1cm46b3BjdWE6cHl0aG9uOnNlcnZlcocEfwAAATANBgkqhkiG9w0BAQsFAAOCAQEASZEXz9kPUcfCHGeXILe4eSrzGSa+peC9OVuRUMcxfxD8CE2DtNtaNqMxpXrMYh24etnHhSnYuwMr2kY3A7Q1pI1TYs9z1ScTfxUzQUCk8qYKuVUtSex1+TCVEVRaFB+IZi5nHj7g/3KyiYY0LXErlpk7IGL3JbWMUWf1BTRfkcyMP83x9v7kFWULSFBvjb/FxfL04ybrJm+7cdzUXEOeIUKYVsB0m9Sa7gt414rVxNv/Rje9mBLatmHRCTMjLA2XHTWNF0pIldRjrNmTUkF0gIdREjyjYK3Vk/9XH0XuTP2MbcbaQ22VE36F8APsYrmFBzqbmxjBZv7qOuWAepehEA==")
+    cert3line = await myobj.add_variable(idx, "Cert_3-Line", "-----END CERTIFICATE-----")
     await server.nodes.objects.add_method(
         ua.NodeId("ServerMethod", idx),
         ua.QualifiedName("ServerMethod", idx),
@@ -161,7 +130,11 @@ async def main():
             await boSenvar.write_value(ua.UInt16(boSen.registers[0]))
             await stopvar.write_value(ua.UInt16(stop.registers[0]))
             await manualvar.write_value(ua.UInt16(manual.registers[0]))
-            await tmp.get_value()
+            await cert1line.get_value()
+            await cert2line.get_value()
+            await cert3line.get_value()
+            if await obtain_flag.get_value() >  0:
+                await flag.write_value("CTF_2024_OPCUA")
             await asyncio.sleep(1)
 
 
