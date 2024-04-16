@@ -80,7 +80,7 @@ Now observe the variables *"Set >0 to obtain flag!"* and *"The flag is:"*. Try t
 The training has been successfully completed! You have gained write access to the OPC UA Server using the stolen identity.
 
 
-## Securtiy Settings
+## Security Settings
 
 For additional information, monitor the network traffic between the client and the server using Wireshark with different *Security Settings*. To do this, disconnect from the server, change the *Security Settings* in the *Server Settings* pop-up window, and reconnect to the server. 
 
